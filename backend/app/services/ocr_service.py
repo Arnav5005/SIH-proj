@@ -176,25 +176,28 @@ class OCRService:
         if img_bgr is None or img_bgr.size == 0:
             return "", 0.0
 
-        processed = preprocess_for_ocr(img_bgr)
-        if HAS_PYTESSERACT:
-            try:
-                text = pytesseract.image_to_string(processed, config='--oem 3 --psm 6')
-                if text and len(text.strip()) > 5:
-                    return text.strip(), 95.0
-            except Exception as e:
-                logger.warning(f"PyTesseract error: {e}")
-
         reader = get_easyocr_reader()
         if reader is not None:
             try:
-                results = reader.readtext(processed, detail=0)
+                # Convert BGR to RGB for EasyOCR
+                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                results = reader.readtext(img_rgb, detail=0)
                 if results:
                     text = "\n".join(results)
                     if len(text.strip()) > 5:
-                        return text.strip(), 93.0
+                        return text.strip(), 95.0
             except Exception as e:
-                logger.warning(f"EasyOCR error: {e}")
+                logger.warning(f"EasyOCR error on RGB: {e}")
+
+        # Fallback to PyTesseract if available
+        if HAS_PYTESSERACT:
+            try:
+                processed = preprocess_for_ocr(img_bgr)
+                text = pytesseract.image_to_string(processed, config='--oem 3 --psm 6')
+                if text and len(text.strip()) > 5:
+                    return text.strip(), 90.0
+            except Exception as e:
+                logger.warning(f"PyTesseract error: {e}")
 
         return "", 0.0
 
@@ -321,106 +324,129 @@ class OCRService:
             }
         }
 
+    def parse_fields_from_ocr_text(self, raw_text: str) -> Dict[str, str]:
+        """Extracts structured fields from raw OCR text using regex and heuristics."""
+        fields = {
+            "name": "",
+            "passport_number": "",
+            "nationality": "",
+            "date_of_birth": "",
+            "gender": "M",
+            "date_of_expiry": "",
+        }
+        if not raw_text:
+            return fields
+
+        lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
+        full_text = " ".join(lines)
+
+        # 1. Search for MRZ line patterns
+        mrz_candidates = [re.sub(r'[^A-Z0-9<]', '', l.upper()) for l in lines if len(re.sub(r'[^A-Z0-9<]', '', l.upper())) >= 25]
+        for i in range(len(mrz_candidates) - 1):
+            l1, l2 = mrz_candidates[i], mrz_candidates[i+1]
+            if (l1.startswith("P") or "<" in l1) and any(c.isdigit() for c in l2):
+                name_raw = l1[5:].rstrip("<")
+                if "<<" in name_raw:
+                    parts = name_raw.split("<<")
+                    surname = parts[0].replace("<", " ").strip()
+                    given = " ".join(parts[1:]).replace("<", " ").strip()
+                    fields["name"] = f"{given} {surname}".strip() if given else surname
+                elif name_raw:
+                    fields["name"] = name_raw.replace("<", " ").strip()
+
+                p_num = l2[0:9].replace("<", "").strip()
+                if len(p_num) >= 6:
+                    fields["passport_number"] = p_num
+
+                nat = l2[10:13].replace("<", "").strip()
+                if len(nat) == 3:
+                    fields["nationality"] = nat
+
+                dob_raw = l2[13:19]
+                if len(dob_raw) == 6 and dob_raw.isdigit():
+                    try:
+                        yy = int(dob_raw[0:2])
+                        year = 1900 + yy if yy > 30 else 2000 + yy
+                        fields["date_of_birth"] = f"{year}-{dob_raw[2:4]}-{dob_raw[4:6]}"
+                    except Exception:
+                        pass
+                break
+
+        # 2. Extract Document Number if not set by MRZ
+        if not fields["passport_number"]:
+            m_doc = re.search(r'(?:PASSPORT\s*(?:NO|NUMBER|NO\.)?[:\s]*)([A-Z0-9]{7,10})', full_text, re.IGNORECASE)
+            if m_doc:
+                fields["passport_number"] = m_doc.group(1).upper()
+            else:
+                m_doc2 = re.search(r'\b([A-Z][0-9]{7,8})\b', full_text)
+                if m_doc2:
+                    fields["passport_number"] = m_doc2.group(1).upper()
+
+        # 3. Extract Name if not set by MRZ
+        if not fields["name"]:
+            surname_m = re.search(r'(?:SURNAME|LAST\s*NAME)[:\s]+([A-Za-z\s]+?)(?:GIVEN|FIRST|PASSPORT|NATIONALITY|SEX|DOB|DATE|$)', full_text, re.IGNORECASE)
+            given_m = re.search(r'(?:GIVEN\s*NAMES?|FIRST\s*NAME)[:\s]+([A-Za-z\s]+?)(?:SURNAME|PASSPORT|NATIONALITY|SEX|DOB|DATE|$)', full_text, re.IGNORECASE)
+            if surname_m and given_m:
+                fields["name"] = f"{given_m.group(1).strip()} {surname_m.group(1).strip()}"
+            elif surname_m:
+                fields["name"] = surname_m.group(1).strip()
+            else:
+                name_m = re.search(r'(?:NAME|FULL\s*NAME)[:\s]+([A-Za-z\s]+?)(?:PASSPORT|NATIONALITY|SEX|DOB|DATE|$)', full_text, re.IGNORECASE)
+                if name_m:
+                    fields["name"] = name_m.group(1).strip()
+
+        # 4. Extract Nationality
+        if not fields["nationality"]:
+            nat_m = re.search(r'NATIONALITY[:\s]+([A-Za-z]+)', full_text, re.IGNORECASE)
+            if nat_m:
+                fields["nationality"] = nat_m.group(1).strip().capitalize()
+
+        # 5. Extract Date of Birth
+        if not fields["date_of_birth"]:
+            dob_m = re.search(r'(?:DOB|DATE\s*OF\s*BIRTH)[:\s]+([0-9]{1,2}[-\s/][A-Za-z0-9]{3,}[-\s/][0-9]{2,4})', full_text, re.IGNORECASE)
+            if dob_m:
+                fields["date_of_birth"] = dob_m.group(1).strip()
+            else:
+                dob_iso = re.search(r'\b(\d{4}[-/]\d{2}[-/]\d{2})\b', full_text)
+                if dob_iso:
+                    fields["date_of_birth"] = dob_iso.group(1)
+
+        # 6. Extract Gender
+        sex_m = re.search(r'(?:SEX|GENDER)[:\s]*([MF])', full_text, re.IGNORECASE)
+        if sex_m:
+            fields["gender"] = sex_m.group(1).upper()
+
+        return fields
+
     def call_groq_llm_ocr(self, raw_text: str) -> Optional[Dict[str, Any]]:
         """
-        Uses Groq LLM API (groq/compound) to parse & extract structured passport fields from OCR text.
+        Uses Groq LLM API to parse & extract structured passport fields from OCR text.
         """
         api_key = getattr(settings, 'GROQ_API_KEY', '')
-        if not api_key or not raw_text:
+        if not api_key or not raw_text or len(raw_text.strip()) < 10:
             return None
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         prompt = (
-            "You are an expert passport OCR post-processing and document-field extraction system.\n\n"
-            "Extract the required fields from the OCR text of a passport.\n"
-            "The OCR text may contain spelling errors, misplaced characters, broken lines, "
-            "or incorrectly recognized characters.\n\n"
-
-            "REQUIRED OUTPUT:\n"
-            "Return ONLY one valid JSON object. Do not include markdown, explanations, "
-            "comments, or additional text.\n\n"
-
-            "JSON schema:\n"
+            "You are an expert passport OCR parsing system.\n"
+            "Extract structured fields from the OCR text below.\n\n"
+            "Return ONLY valid JSON matching this schema:\n"
             "{\n"
-            '  "name": "FULL NAME",\n'
-            '  "passport_number": "PASSPORT NUMBER",\n'
-            '  "nationality": "NATIONALITY",\n'
-            '  "date_of_birth": "YYYY-MM-DD",\n'
+            '  "name": "Extracted Full Name (Given Names followed by Surname) or null",\n'
+            '  "passport_number": "Extracted Passport Number or null",\n'
+            '  "nationality": "Extracted Nationality or null",\n'
+            '  "date_of_birth": "YYYY-MM-DD or null",\n'
             '  "gender": "M or F"\n'
             "}\n\n"
-
-            "EXTRACTION RULES:\n\n"
-
-            "1. FULL NAME:\n"
-            "- Find the fields labeled 'Surname' and 'Given Name' / 'Given Names'.\n"
-            "- Construct the full name by combining Given Name(s) followed by Surname.\n"
-            "- Example: Surname = LIMA and Given Name = TASLIMA AKTER "
-            "must produce 'TASLIMA AKTER LIMA'.\n"
-            "- Do NOT use the name from unrelated fields or signatures.\n"
-            "- Preserve the actual spelling from the passport as accurately as possible.\n\n"
-
-            "2. PASSPORT NUMBER:\n"
-            "- Extract the value specifically associated with 'Passport No.' or "
-            "'Passport Number'.\n"
-            "- NEVER use 'Personal No.', 'Personal ID Number', or 'Previous Passport No.'.\n"
-            "- Passport number is the document/passport number, not the personal ID number.\n"
-            "- Verify the passport number against the MRZ if an MRZ is present.\n"
-            "- Be especially careful with OCR confusion between characters such as "
-            "O/0, I/1, B/8, S/5, Z/2, and G/6.\n\n"
-
-            "3. NATIONALITY:\n"
-            "- Extract the value associated with 'Nationality'.\n"
-            "- If both a written nationality and a three-letter country code are present, "
-            "use the written nationality in the JSON.\n"
-            "- Example: 'BANGLADESHI' is the nationality, while 'BGD' is the country code.\n"
-            "- Do not return the country code when the written nationality is available.\n\n"
-
-            "4. DATE OF BIRTH:\n"
-            "- Extract ONLY the date associated with 'Date of Birth'.\n"
-            "- Do not confuse it with Date of Issue or Date of Expiry.\n"
-            "- Convert the date to ISO format YYYY-MM-DD.\n"
-            "- Example: '25 DEC 1981' -> '1981-12-25'.\n"
-            "- Verify the date using the MRZ when available.\n\n"
-
-            "5. GENDER:\n"
-            "- Extract the value associated with 'Sex' or 'Gender'.\n"
-            "- Return only 'M' or 'F'.\n\n"
-
-            "VERIFICATION RULES:\n"
-            "- Perform the extraction twice internally before producing the final JSON.\n"
-            "- First identify the values from the main passport fields.\n"
-            "- Then independently verify them using the MRZ and/or other repeated information "
-            "in the OCR text when available.\n"
-            "- If the main passport field and MRZ disagree because of an apparent OCR error, "
-            "use the value that is most strongly supported by the passport's printed fields "
-            "and MRZ structure.\n"
-            "- Do not invent or guess missing information.\n"
-            "- Correct obvious OCR errors only when the intended value is strongly supported "
-            "by another occurrence of the same information.\n"
-            "- Make sure every returned value corresponds to the correct passport field.\n\n"
-
-            "MRZ RULES:\n"
-            "- If an MRZ is present, use it as an additional verification source.\n"
-            "- The MRZ contains structured passport information and can help verify the "
-            "passport number, date of birth, sex, nationality, and name.\n"
-            "- Do not blindly copy OCR text from the MRZ if it conflicts with clearly readable "
-            "printed passport fields.\n\n"
-
-            "IMPORTANT:\n"
-            "- Return ONLY the JSON object.\n"
-            "- All five keys must always be present.\n"
-            "- Use null for a field only when the value genuinely cannot be determined.\n"
-            "- Do not add confidence scores or extra keys.\n\n"
-
-            "OCR INPUT:\n"
-            + raw_text
+            "Do not invent information. Extract only what is present in the text.\n\n"
+            "OCR INPUT TEXT:\n" + raw_text
         )
 
         payload = {
             "model": getattr(settings, 'GROQ_MODEL', 'groq/compound'),
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 300
+            "temperature": 0.0,
+            "max_tokens": 250
         }
 
         headers = {
@@ -435,7 +461,7 @@ class OCRService:
                 data=json.dumps(payload).encode("utf-8"),
                 headers=headers
             )
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 content = data["choices"][0]["message"]["content"].strip()
                 match = re.search(r'\{.*\}', content, re.DOTALL)
@@ -482,7 +508,7 @@ class OCRService:
         
         if mrz_lines:
             parsed = parse_mrz_td3(mrz_lines[0], mrz_lines[1])
-            confidence = max(ocr_conf, 92.5 if parsed["mrz_valid"] else 78.0)
+            confidence = max(ocr_conf, 95.0 if parsed["mrz_valid"] else 80.0)
             fields = {
                 "name": parsed["name"],
                 "passport_number": parsed["passport_number"],
@@ -505,7 +531,7 @@ class OCRService:
             confidence_justification = (
                 f"AI Confidence Score ({confidence}%): High confidence justified because primary fields "
                 f"(Full Name: '{fields.get('name')}', Passport Number: '{fields.get('passport_number')}', DOB: '{fields.get('date_of_birth')}') "
-                f"were verified against the official Excel Border Registry (dummy_database.xlsx) and ICAO 9303 MRZ checksums."
+                f"were verified against official border records and ICAO 9303 MRZ checksums."
             ) if excel_match.get("is_found", False) else (
                 f"AI Confidence Score ({confidence}%): Confidence justified via ICAO 9303 Machine Readable Zone (MRZ) checksum validation."
             )
@@ -519,24 +545,23 @@ class OCRService:
                 "raw_text_detected": bool(raw_text),
             }
 
-        extracted_fields = {
-            "name": "",
-            "passport_number": "",
-            "nationality": "Indian",
-            "date_of_birth": "",
-            "gender": "M",
-            "date_of_expiry": "",
-        }
+        # Visual zone parsing directly from raw_text
+        extracted_fields = self.parse_fields_from_ocr_text(raw_text)
 
-        # Try Groq LLM OCR extraction if raw_text present
-        if raw_text:
+        # Try Groq LLM OCR extraction if any core field is still missing
+        if raw_text and (not extracted_fields["name"] or not extracted_fields["passport_number"]):
             llm_fields = self.call_groq_llm_ocr(raw_text)
             if llm_fields:
-                extracted_fields["name"] = llm_fields.get("name") or extracted_fields["name"]
-                extracted_fields["passport_number"] = llm_fields.get("passport_number") or extracted_fields["passport_number"]
-                extracted_fields["nationality"] = llm_fields.get("nationality") or extracted_fields["nationality"]
-                extracted_fields["date_of_birth"] = llm_fields.get("date_of_birth") or extracted_fields["date_of_birth"]
-                extracted_fields["gender"] = llm_fields.get("gender") or extracted_fields["gender"]
+                if not extracted_fields["name"] and llm_fields.get("name"):
+                    extracted_fields["name"] = llm_fields["name"]
+                if not extracted_fields["passport_number"] and llm_fields.get("passport_number"):
+                    extracted_fields["passport_number"] = llm_fields["passport_number"]
+                if not extracted_fields["nationality"] and llm_fields.get("nationality"):
+                    extracted_fields["nationality"] = llm_fields["nationality"]
+                if not extracted_fields["date_of_birth"] and llm_fields.get("date_of_birth"):
+                    extracted_fields["date_of_birth"] = llm_fields["date_of_birth"]
+                if llm_fields.get("gender"):
+                    extracted_fields["gender"] = llm_fields["gender"]
 
         if manual_override:
             if manual_override.get("fullName"):
@@ -554,19 +579,12 @@ class OCRService:
             if manual_override.get("gender"):
                 extracted_fields["gender"] = manual_override["gender"]
 
-        # Search for any passport number or name in dummy_database.xlsx present in raw_text
+        # Only cross-check registry if we actually extracted a valid passport number or name
         from backend.app.services.registry_service import registry_service
         p_num = extracted_fields.get("passport_number")
         p_name = extracted_fields.get("name")
 
-        if raw_text and not p_num and registry_service.excel_data is not None:
-            for _, row in registry_service.excel_data.iterrows():
-                pass_no = str(row.get("Passport Number", "")).strip().upper()
-                if pass_no and len(pass_no) >= 6 and pass_no in raw_text.upper():
-                    p_num = pass_no
-                    break
-
-        excel_match = registry_service.lookup_excel_database(p_num, p_name)
+        excel_match = registry_service.lookup_excel_database(p_num, p_name) if (p_num or p_name) else {}
         if excel_match.get("is_found", False):
             extracted_fields["name"] = excel_match.get("full_name") or extracted_fields["name"]
             extracted_fields["passport_number"] = excel_match.get("passport_number") or extracted_fields["passport_number"]
@@ -575,21 +593,19 @@ class OCRService:
             extracted_fields["gender"] = excel_match.get("gender") or extracted_fields["gender"]
 
         filled_count = sum(1 for v in extracted_fields.values() if v)
-        confidence = round(70.0 + (filled_count / len(extracted_fields)) * 29.0, 1)
+        confidence = round(70.0 + (filled_count / len(extracted_fields)) * 26.0, 1)
 
         confidence_justification = ""
         if excel_match.get("is_found", False):
             confidence = max(confidence, 96.5)
             confidence_justification = (
-                f"AI Confidence Score ({confidence}%): High confidence is justified because 100% of primary identity fields "
+                f"AI Confidence Score ({confidence}%): High confidence is justified because primary fields "
                 f"(Full Name: '{extracted_fields.get('name')}', Passport Number: '{extracted_fields.get('passport_number')}', "
-                f"DOB: '{extracted_fields.get('date_of_birth')}') were cross-verified against the official Excel Border Registry "
-                f"(dummy_database.xlsx) with 0 field discrepancies."
+                f"DOB: '{extracted_fields.get('date_of_birth')}') match the official Excel Border Registry."
             )
         else:
             confidence_justification = (
-                f"AI Confidence Score ({confidence}%): Confidence justified via Groq LLM document structure analysis "
-                f"and visual field extraction."
+                f"AI Confidence Score ({confidence}%): Fields extracted from document visual zone and structure analysis."
             )
 
         return {

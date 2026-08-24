@@ -270,6 +270,8 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
     if (docType === 'passport') {
       setPassportDoc(null);
       setExtractedData({ fullName: '', docNumber: '', nationality: '', dob: '' });
+      setOcrConfidence(null);
+      setOcrJustification(null);
     } else if (docType === 'passportFace') {
       setPassportFaceDoc(null);
     } else if (docType === 'visa') {
@@ -296,44 +298,28 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
     try {
       const ocrRes = await api.extractOcr(passportDoc.uri);
       const fields = ocrRes.fields || {};
-      const fullName = fields.name || fields.fullName || extractedData.fullName || 'TASLIMA AKTER LIMA';
-      const docNumber = fields.passport_number || fields.docNumber || extractedData.docNumber || 'AG8148412';
-      const nationality = fields.nationality || extractedData.nationality || 'BANGLADESHI';
-      const dob = fields.date_of_birth || fields.dob || extractedData.dob || '1981-12-25';
+      const fullName = fields.name || fields.fullName || '';
+      const docNumber = fields.passport_number || fields.docNumber || '';
+      const nationality = fields.nationality || '';
+      const dob = fields.date_of_birth || fields.dob || '';
 
       setExtractedData({ fullName, docNumber, nationality, dob });
 
-      const conf = ocrRes.confidence ? Number(ocrRes.confidence.toFixed(1)) : 96.5;
+      const conf = ocrRes.confidence ? Number(ocrRes.confidence.toFixed(1)) : 85.0;
       const just = ocrRes.confidence_justification || 
-        `AI Confidence Score (${conf}%): High confidence justified because 100% of primary identity fields (Full Name: '${fullName}', Document Number: '${docNumber}', DOB: '${dob}') were verified against official border registry (dummy_database.xlsx) with 0 field discrepancies.`;
+        `AI Confidence Score (${conf}%): Fields extracted via document OCR and structure analysis.`;
 
       setOcrConfidence(conf);
       setOcrJustification(just);
 
       Alert.alert(
-        `OCR Extraction Verified (${conf}%)`,
-        just
+        `OCR Extraction Completed (${conf}%)`,
+        just || `Extracted: ${fullName || 'Name'}, Doc: ${docNumber || 'N/A'}`
       );
     } catch (err: any) {
-      console.warn('OCR network request fallback, loading verified registry fields:', err);
-
-      const fullName = extractedData.fullName || 'TASLIMA AKTER LIMA';
-      const docNumber = extractedData.docNumber || 'AG8148412';
-      const nationality = extractedData.nationality || 'BANGLADESHI';
-      const dob = extractedData.dob || '1981-12-25';
-
-      setExtractedData({ fullName, docNumber, nationality, dob });
-
-      const conf = 96.5;
-      const just = `AI Confidence Score (${conf}%): High confidence justified because 100% of primary identity fields (Full Name: '${fullName}', Document Number: '${docNumber}', DOB: '${dob}') were cross-verified against official Excel Border Registry (dummy_database.xlsx) with 0 field discrepancies.`;
-
-      setOcrConfidence(conf);
-      setOcrJustification(just);
-
-      Alert.alert(
-        `OCR Extraction Verified (${conf}%)`,
-        just
-      );
+      console.warn('OCR network request error:', err);
+      const msg = err.message || 'Could not extract text from document. Please ensure document is clearly visible.';
+      Alert.alert('OCR Extraction Alert', msg);
     } finally {
       setIsExtractingOcr(false);
     }
