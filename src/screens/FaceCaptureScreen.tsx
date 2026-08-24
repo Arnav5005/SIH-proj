@@ -131,18 +131,22 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
         pickImageWeb(true);
       } else {
         if (cameraRef.current && nativePermission?.granted) {
-          const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-          if (photo?.uri) {
-            setCapturedPhotoUri(photo.uri);
+          const photo = await cameraRef.current.takePictureAsync({ quality: 0.8, base64: true });
+          if (photo) {
+            const dataUri = photo.base64 ? `data:image/jpeg;base64,${photo.base64}` : photo.uri;
+            setCapturedPhotoUri(dataUri);
           }
         } else {
           const res = await ImagePicker.launchCameraAsync({
             allowsEditing: true,
             aspect: [1, 1],
             quality: 0.8,
+            base64: true,
           });
-          if (!res.canceled && res.assets && res.assets[0]?.uri) {
-            setCapturedPhotoUri(res.assets[0].uri);
+          if (!res.canceled && res.assets && res.assets[0]) {
+            const asset = res.assets[0];
+            const dataUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+            setCapturedPhotoUri(dataUri);
           }
         }
       }
@@ -188,9 +192,12 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
           allowsEditing: true,
           aspect: [1, 1],
           quality: 0.8,
+          base64: true,
         });
-        if (!res.canceled && res.assets && res.assets[0]?.uri) {
-          setCapturedPhotoUri(res.assets[0].uri);
+        if (!res.canceled && res.assets && res.assets[0]) {
+          const asset = res.assets[0];
+          const dataUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+          setCapturedPhotoUri(dataUri);
         }
       } catch (e) {
         Alert.alert('Gallery Error', 'Could not access photo library.');

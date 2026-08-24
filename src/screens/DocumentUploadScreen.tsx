@@ -174,14 +174,16 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
         quality: 0.8,
+        base64: true,
       });
 
-      if (!result.canceled && result.assets && result.assets[0]?.uri) {
+      if (!result.canceled && result.assets && result.assets[0]) {
         const asset = result.assets[0];
+        const dataUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
         const fileName = `${docType}-scan-${Date.now().toString().slice(-4)}.jpg`;
         const newDoc: DocAttachment = {
           name: fileName,
-          uri: asset.uri,
+          uri: dataUri,
           size: '1.8 MB',
           type: 'image/jpeg',
         };
@@ -238,50 +240,29 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
 
     // Native Mobile Document Picker
     try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ['image/*', 'application/pdf'],
-        copyToCacheDirectory: true,
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        base64: true,
       });
 
       if (!res.canceled && res.assets && res.assets[0]) {
-        const file = res.assets[0];
-        const fileSizeMB = file.size ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : '1.2 MB';
+        const asset = res.assets[0];
+        const dataUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
         const newDoc: DocAttachment = {
-          name: file.name || `${docType}-doc.pdf`,
-          uri: file.uri,
-          size: fileSizeMB,
-          type: file.mimeType || 'application/pdf',
+          name: `${docType}-upload.jpg`,
+          uri: dataUri,
+          size: '2.1 MB',
+          type: 'image/jpeg',
         };
-
         if (docType === 'passport') setPassportDoc(newDoc);
         else if (docType === 'passportFace') setPassportFaceDoc(newDoc);
         else if (docType === 'visa') setVisaDoc(newDoc);
         else if (docType === 'id') setNationalIdDoc(newDoc);
-
-        Alert.alert('Document Attached', `${newDoc.name} uploaded from storage.`);
+        Alert.alert('Document Attached', `${docType.toUpperCase()} image uploaded from storage.`);
       }
-    } catch (e) {
-      try {
-        const imgRes = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images'],
-          quality: 0.8,
-        });
-        if (!imgRes.canceled && imgRes.assets && imgRes.assets[0]) {
-          const asset = imgRes.assets[0];
-          const newDoc: DocAttachment = {
-            name: `${docType}-upload.jpg`,
-            uri: asset.uri,
-            size: '2.1 MB',
-            type: 'image/jpeg',
-          };
-          if (docType === 'passport') setPassportDoc(newDoc);
-          else if (docType === 'passportFace') setPassportFaceDoc(newDoc);
-          else if (docType === 'visa') setVisaDoc(newDoc);
-          else if (docType === 'id') setNationalIdDoc(newDoc);
-        }
-      } catch (err) {
-        Alert.alert('Browse Error', 'Could not browse device files.');
-      }
+    } catch (err) {
+      Alert.alert('Browse Error', 'Could not browse device files.');
     }
   };
 

@@ -9,25 +9,25 @@ const getBackendUrl = (): string => {
   }
   
   // Web browser / Local Environment
-  if (typeof window !== 'undefined' && window.location) {
+  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
     const hostname = window.location.hostname || '127.0.0.1';
     return `http://${hostname}:8000`;
   }
   
   // Expo mobile app on physical device or emulator via Metro hostUri
-  const hostUri = Constants.expoConfig?.hostUri || Constants.manifest2?.extra?.expoGo?.debuggerHost;
+  const hostUri = Constants.expoConfig?.hostUri || (Constants as any).manifest2?.extra?.expoGo?.debuggerHost || (Constants as any).manifest?.debuggerHost;
   if (hostUri) {
     const ip = hostUri.split(':')[0];
-    if (ip) {
+    if (ip && !ip.includes('exp.direct') && !ip.includes('ngrok')) {
       return `http://${ip}:8000`;
     }
   }
   
-  return 'http://127.0.0.1:8000';
+  return 'http://10.130.164.160:8000';
 };
 
 export const BASE_URL = getBackendUrl();
-export const FALLBACK_URLS = [BASE_URL, 'http://127.0.0.1:8000', 'http://localhost:8000'];
+export const FALLBACK_URLS = [BASE_URL, 'http://10.130.164.160:8000', 'http://127.0.0.1:8000', 'http://localhost:8000'];
 
 export interface ScreenDocumentPayload {
   passport_image?: string | null;
@@ -90,27 +90,35 @@ export interface FaceQualityCheckResult {
 export const api = {
   // 1. Check Face Capture Quality (Centering, Lighting, Glasses/Mask)
   async checkFaceQuality(photoUri: string): Promise<FaceQualityCheckResult> {
-    try {
-      const res = await fetch(`${BASE_URL}/api/face/quality`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: photoUri }),
-      });
-      if (!res.ok) throw new Error(`Quality check failed: ${res.status}`);
-      return await res.json();
-    } catch (e) {
-      console.warn(`Face quality API error/offline fallback (${BASE_URL}):`, e);
-      return {
-        face_detected: false,
-        error_message: `Backend AI offline (${BASE_URL}). Ensure Python backend is running and phone is connected to host Wi-Fi.`,
-        checks: {
-          face_centered: { passed: false, message: `Backend AI offline (${BASE_URL})` },
-          good_lighting: { passed: false, message: 'Backend AI offline' },
-          no_glasses_or_mask: { passed: false, message: 'Backend AI offline' },
-        },
-        overall_valid: false,
-      };
+    const urls = Array.from(new Set(FALLBACK_URLS));
+    let lastError: any = null;
+
+    for (const baseUrl of urls) {
+      try {
+        const res = await fetch(`${baseUrl}/api/face/quality`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: photoUri }),
+        });
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch (e) {
+        lastError = e;
+      }
     }
+
+    console.warn(`Face quality API error/offline fallback:`, lastError);
+    return {
+      face_detected: false,
+      error_message: `Backend AI unreachable (${BASE_URL}). Ensure phone and PC are on the same Wi-Fi.`,
+      checks: {
+        face_centered: { passed: false, message: `Backend AI offline (${BASE_URL})` },
+        good_lighting: { passed: false, message: 'Backend AI offline' },
+        no_glasses_or_mask: { passed: false, message: 'Backend AI offline' },
+      },
+      overall_valid: false,
+    };
   },
 
   // 2. Fetch All Screening Records
@@ -379,15 +387,32 @@ export const api = {
 
   // 12. Standalone OCR Extraction
   async extractOcr(imageUri: string): Promise<any> {
-    const res = await fetch(`${BASE_URL}/api/ocr`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageUri }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || err.message || `OCR API Error (${res.status})`);
+    const urls = Array.from(new Set(FALLBACK_URLS));
+    let lastError: any = null;
+
+    for (const baseUrl of urls) {
+      try {
+        const res = await fetch(`${baseUrl}/api/ocr`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: imageUri }),
+        });
+        if (res.ok) {
+          return await res.json();
+        }
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 400 && err.detail) {
+          throw new Error(err.detail);
+        }
+        lastError = new Error(err.detail || err.message || `OCR API Error (${res.status})`);
+      } catch (e: any) {
+        if (e.message && e.message.includes('Rejected')) {
+          throw e;
+        }
+        lastError = e;
+      }
     }
-    return await res.json();
+
+    throw lastError || new Error(`OCR API connection failed across all hosts (${BASE_URL}).`);
   },
 };
