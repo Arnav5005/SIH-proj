@@ -23,6 +23,7 @@ export interface ScreeningRecord {
   };
   notes?: string;
   photoUrl?: string;
+  livePhotoUri?: string;
 }
 
 export interface OfficerProfile {

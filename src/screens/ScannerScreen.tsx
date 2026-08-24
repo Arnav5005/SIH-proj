@@ -16,6 +16,8 @@ import { colors, typography, rounded, spacing } from '../theme/theme';
 import { samplePresetDocuments } from '../mockData';
 import { ScreeningRecord, StatusType } from '../types';
 
+import { api } from '../services/api';
+
 interface ScannerScreenProps {
   onScanComplete: (newRecord: ScreeningRecord) => void;
   checkpointId?: string;
@@ -60,7 +62,7 @@ export const ScannerScreen: React.FC<ScannerScreenProps> = ({
 
   const currentPreset = samplePresetDocuments[selectedPresetIndex];
 
-  const handleStartScan = () => {
+  const handleStartScan = async () => {
     setIsScanning(true);
     setScanResult(null);
     setScanStep(1);
@@ -70,35 +72,56 @@ export const ScannerScreen: React.FC<ScannerScreenProps> = ({
     setTimeout(() => setScanStep(3), 1400);
     setTimeout(() => setScanStep(4), 2100);
 
-    setTimeout(() => {
-      setIsScanning(false);
-      setScanStep(5);
-      setScanResult(currentPreset);
-    }, 2800);
+    const caseMap: Record<number, string> = {
+      0: 'CASE_GENUINE',
+      1: 'CASE_EXPIRED',
+      2: 'CASE_TAMPERED',
+      3: 'CASE_WATCHLIST',
+    };
+    const caseId = caseMap[selectedPresetIndex] || 'CASE_GENUINE';
+
+    try {
+      const res = await api.runDemoCase(caseId);
+      setTimeout(() => {
+        setIsScanning(false);
+        setScanStep(5);
+        setScanResult(res.ui_record);
+      }, 2800);
+    } catch (e) {
+      setTimeout(() => {
+        setIsScanning(false);
+        setScanStep(5);
+        setScanResult(currentPreset);
+      }, 2800);
+    }
   };
 
   const handleApprove = (overrideStatus?: StatusType) => {
-    const finalStatus: StatusType = overrideStatus || currentPreset.status;
+    const finalStatus: StatusType = overrideStatus || (scanResult?.status as StatusType) || currentPreset.status;
+    const recId = scanResult?.id || `VF-${Math.floor(28490 + Math.random() * 1000)}`;
+    
+    api.updateRecordStatus(recId, finalStatus);
+
     const newRecord: ScreeningRecord = {
-      id: `VF-${Math.floor(28490 + Math.random() * 1000)}`,
-      name: currentPreset.name,
-      docType: currentPreset.type,
-      docNumber: currentPreset.docNumber,
+      id: recId,
+      name: scanResult?.name || currentPreset.name,
+      docType: scanResult?.docType || currentPreset.type,
+      docNumber: scanResult?.docNumber || currentPreset.docNumber,
       status: finalStatus,
-      timestamp: new Date().toLocaleTimeString('en-US', {
+      timestamp: scanResult?.timestamp || new Date().toLocaleTimeString('en-US', {
         hour: '2-digit',
         minute: '2-digit',
       }),
       checkpointId,
       officerId,
-      gender: currentPreset.gender,
-      dob: currentPreset.dob,
-      address: currentPreset.address,
-      nationality: currentPreset.nationality,
-      matchScore: currentPreset.matchScore,
-      ocrConfidence: currentPreset.ocrConfidence,
-      securityChecks: currentPreset.securityChecks,
-      notes: currentPreset.notes,
+      gender: scanResult?.gender || currentPreset.gender,
+      dob: scanResult?.dob || currentPreset.dob,
+      address: scanResult?.address || currentPreset.address,
+      nationality: scanResult?.nationality || currentPreset.nationality,
+      matchScore: scanResult?.matchScore ?? currentPreset.matchScore,
+      ocrConfidence: scanResult?.ocrConfidence ?? currentPreset.ocrConfidence,
+      securityChecks: scanResult?.securityChecks || currentPreset.securityChecks,
+      notes: scanResult?.notes || currentPreset.notes,
     };
 
     onScanComplete(newRecord);

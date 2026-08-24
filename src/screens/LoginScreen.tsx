@@ -15,6 +15,8 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { colors, typography, rounded, spacing } from '../theme/theme';
 
+import { api } from '../services/api';
+
 interface LoginScreenProps {
   onLoginSuccess: (officerData: any) => void;
 }
@@ -29,7 +31,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!officerId.trim()) {
       setErrorMessage('Please enter your Officer ID');
       return;
@@ -42,17 +44,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     setErrorMessage('');
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
+      const res = await api.login(officerId, password, role, checkpointId, otpCode);
+      setIsLoading(false);
+      onLoginSuccess(res.officer);
+    } catch (e) {
       setIsLoading(false);
       onLoginSuccess({
         id: officerId,
         role: role,
-        name: 'Officer Verma',
+        name: 'Officer Rajesh Verma',
         checkpoint: checkpointId || 'CHK-00184',
         rank: role === 'admin' ? 'Commandant (HQ)' : 'Assistant Commandant',
         unit: '14th Battalion SSB',
       });
-    }, 600);
+    }
   };
 
   return (

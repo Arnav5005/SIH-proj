@@ -11,6 +11,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { colors, typography, rounded, spacing } from '../theme/theme';
 import { SecurityAlert } from '../types';
 
+import { api } from '../services/api';
+
 interface AlertsScreenProps {
   alerts: SecurityAlert[];
   onAcknowledgeAlert: (id: string) => void;
@@ -56,11 +58,25 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
     }
   };
 
-  const handleTriggerAlarm = () => {
+  const handleTriggerAlarm = async () => {
+    try {
+      await api.broadcastAlert(
+        'BROADCAST: Checkpoint Scrutiny Directive',
+        'Sector Alarm broadcast sent to Raxaul Checkpoint North/South bays and Central Command.',
+        'WARNING',
+        'Checkpoint CHK-00184'
+      );
+    } catch (e) {}
+
     Alert.alert(
       'Broadcast Security Alert',
       'Sector Alarm broadcast sent to Raxaul Checkpoint North/South bays and Central Command.'
     );
+  };
+
+  const handleAck = (id: string) => {
+    api.acknowledgeAlert(id);
+    onAcknowledgeAlert(id);
   };
 
   return (
@@ -173,7 +189,7 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
                       styles.ackBtn,
                       item.acknowledged && styles.ackBtnDone,
                     ]}
-                    onPress={() => onAcknowledgeAlert(item.id)}
+                    onPress={() => handleAck(item.id)}
                   >
                     <MaterialIcons
                       name={item.acknowledged ? 'check' : 'done-all'}

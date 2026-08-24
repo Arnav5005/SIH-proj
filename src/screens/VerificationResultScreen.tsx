@@ -20,6 +20,7 @@ interface VerificationResultScreenProps {
   onAccept: (record: ScreeningRecord) => void;
   onDeny: (record: ScreeningRecord) => void;
   onNewVerification: () => void;
+  record?: ScreeningRecord | null;
   isDark?: boolean;
 }
 
@@ -28,39 +29,55 @@ export const VerificationResultScreen: React.FC<VerificationResultScreenProps> =
   onAccept,
   onDeny,
   onNewVerification,
+  record,
   isDark = false,
 }) => {
   const theme = getTheme(isDark);
 
-  const resultRecord: ScreeningRecord = {
+  const fallbackRecord: ScreeningRecord = {
     id: 'VF-20481',
-    name: 'Alex Morgan',
+    name: 'Pending Subject',
     docType: 'Passport',
     docNumber: 'P8742031',
-    status: 'VERIFIED',
-    timestamp: '14:34:00 UTC',
+    status: 'NEEDS_REVIEW',
+    timestamp: 'Just now',
     checkpointId: 'CHK-00184',
     officerId: 'OFF-1042',
     gender: 'M',
     dob: '12 Mar 1992',
-    address: 'New York, United States',
-    nationality: 'United States',
-    matchScore: 98.7,
-    ocrConfidence: 99.4,
+    address: 'Transit Checkpoint',
+    nationality: 'Unverified',
+    matchScore: 0.0,
+    ocrConfidence: 95.0,
     securityChecks: {
       hologramDetected: true,
       tamperingDetected: false,
       watchlistMatch: false,
-      biometricMatch: true,
+      biometricMatch: false,
     },
-    notes: 'Submitted identity matches the verification records with high confidence.',
+    notes: 'Awaiting biometric verification results.',
   };
+
+  const resultRecord = record || fallbackRecord;
+  const isVerified = resultRecord.status === 'VERIFIED';
+  const isHighRisk = resultRecord.status === 'HIGH_RISK';
+  const isMismatch = resultRecord.status === 'MISMATCH';
+
+  // Avatar Initials
+  const initials = resultRecord.name
+    ? resultRecord.name
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase()
+    : 'AM';
 
   const handleAccept = () => {
     onAccept(resultRecord);
     Alert.alert(
       'Verification Accepted',
-      'Alex Morgan (VF-20481) has been verified and approved for transit.'
+      `${resultRecord.name} (${resultRecord.id}) has been verified and approved for transit.`
     );
   };
 
@@ -73,14 +90,14 @@ export const VerificationResultScreen: React.FC<VerificationResultScreenProps> =
     onDeny(deniedRecord);
     Alert.alert(
       'Verification Denied',
-      'Alex Morgan (VF-20481) transit clearance has been denied.'
+      `${resultRecord.name} (${resultRecord.id}) transit clearance has been denied.`
     );
   };
 
   const handleDownload = () => {
     Alert.alert(
       'Download Report',
-      'Screening Audit Report (VF-20481.pdf) downloaded to device.'
+      `Screening Audit Report (${resultRecord.id}.pdf) downloaded to device.`
     );
   };
 
@@ -106,7 +123,7 @@ export const VerificationResultScreen: React.FC<VerificationResultScreenProps> =
         </View>
 
         <View style={[styles.idBadge, { backgroundColor: theme.surfaceCard, borderColor: theme.border }]}>
-          <Text style={[styles.idBadgeText, { color: theme.textPrimary }]}>VF-20481</Text>
+          <Text style={[styles.idBadgeText, { color: theme.textPrimary }]}>{resultRecord.id}</Text>
         </View>
       </View>
 
@@ -155,32 +172,57 @@ export const VerificationResultScreen: React.FC<VerificationResultScreenProps> =
         {/* Identity Verified Card */}
         <View style={[styles.identityCard, { backgroundColor: theme.surfaceCard, borderColor: theme.border }]}>
           <View style={styles.verifiedBadgeContainer}>
-            <View style={[styles.verifiedBadge, { backgroundColor: theme.isDark ? '#183a24' : '#e6f4ea', borderColor: theme.isDark ? '#2d5f3f' : '#bbf7d0' }]}>
-              <MaterialIcons name="verified-user" size={13} color={theme.badgeOperational} />
-              <Text style={[styles.verifiedBadgeText, { color: theme.isDark ? '#4cd964' : '#137333' }]}>MATCH VERIFIED</Text>
-            </View>
+            {isVerified ? (
+              <View style={[styles.verifiedBadge, { backgroundColor: theme.isDark ? '#183a24' : '#e6f4ea', borderColor: theme.isDark ? '#2d5f3f' : '#bbf7d0' }]}>
+                <MaterialIcons name="verified-user" size={13} color={theme.badgeOperational} />
+                <Text style={[styles.verifiedBadgeText, { color: theme.isDark ? '#4cd964' : '#137333' }]}>MATCH VERIFIED</Text>
+              </View>
+            ) : isHighRisk ? (
+              <View style={[styles.verifiedBadge, { backgroundColor: theme.isDark ? '#4a0e17' : '#fee2e2', borderColor: '#ef4444' }]}>
+                <MaterialIcons name="warning" size={13} color="#ef4444" />
+                <Text style={[styles.verifiedBadgeText, { color: '#ef4444' }]}>HIGH RISK ALERT</Text>
+              </View>
+            ) : (
+              <View style={[styles.verifiedBadge, { backgroundColor: theme.isDark ? '#3d1818' : '#fef2f2', borderColor: theme.errorBorder }]}>
+                <MaterialIcons name="error-outline" size={13} color={theme.errorText} />
+                <Text style={[styles.verifiedBadgeText, { color: theme.errorText }]}>
+                  {resultRecord.status.replace('_', ' ')}
+                </Text>
+              </View>
+            )}
           </View>
 
-          <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Identity Verified</Text>
+          <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>
+            {isVerified ? 'Identity Verified' : isHighRisk ? 'Security Alert: High Risk' : 'Discrepancy Detected'}
+          </Text>
           <Text style={[styles.cardSubtitle, { color: theme.textMuted }]}>
-            The submitted identity matches the verification records with high confidence.
+            {resultRecord.notes || 'Screening evaluated through AI neural biometric & forensic pipeline.'}
           </Text>
 
           {/* Applicant Info Box */}
           <View style={[styles.applicantBox, { backgroundColor: theme.isDark ? theme.surfaceContainerLow : '#f8fafc', borderColor: theme.border }]}>
             <View style={[styles.avatarInitials, { backgroundColor: theme.isDark ? theme.surfaceContainerHighest : '#e2e8f0' }]}>
-              <Text style={[styles.initialsText, { color: theme.textPrimary }]}>AM</Text>
+              <Text style={[styles.initialsText, { color: theme.textPrimary }]}>{initials}</Text>
             </View>
 
             <View style={styles.applicantDetails}>
-              <Text style={[styles.applicantName, { color: theme.textPrimary }]}>Alex Morgan</Text>
-              <Text style={[styles.applicantSub, { color: theme.textMuted }]}>United States · DOB: 12 Mar 1992</Text>
-              <Text style={[styles.applicantPid, { color: theme.textMuted }]}>PID: PER-849201</Text>
+              <Text style={[styles.applicantName, { color: theme.textPrimary }]}>{resultRecord.name}</Text>
+              <Text style={[styles.applicantSub, { color: theme.textMuted }]}>
+                {resultRecord.nationality} · DOB: {resultRecord.dob}
+              </Text>
+              <Text style={[styles.applicantPid, { color: theme.textMuted }]}>DOC: {resultRecord.docNumber}</Text>
             </View>
 
             <View style={styles.confidenceBox}>
               <Text style={[styles.confidenceLabel, { color: theme.textMuted }]}>CONFIDENCE</Text>
-              <Text style={[styles.confidenceValue, { color: theme.badgeOperational }]}>98.7%</Text>
+              <Text
+                style={[
+                  styles.confidenceValue,
+                  { color: isVerified ? theme.badgeOperational : isHighRisk ? '#ef4444' : theme.warningText },
+                ]}
+              >
+                {resultRecord.matchScore}%
+              </Text>
             </View>
           </View>
 
@@ -189,26 +231,121 @@ export const VerificationResultScreen: React.FC<VerificationResultScreenProps> =
             <View style={[styles.subResultItem, { backgroundColor: theme.isDark ? theme.surfaceContainerLow : '#f8fafc', borderColor: theme.border }]}>
               <Text style={[styles.subResultLabel, { color: theme.textSecondary }]}>Face match</Text>
               <View style={styles.subResultStatus}>
-                <MaterialIcons name="check-circle" size={15} color={theme.badgeOperational} />
-                <Text style={[styles.subResultStatusText, { color: theme.badgeOperational }]}>PASSED</Text>
+                <MaterialIcons
+                  name={resultRecord.securityChecks.biometricMatch ? 'check-circle' : 'cancel'}
+                  size={15}
+                  color={resultRecord.securityChecks.biometricMatch ? theme.badgeOperational : theme.errorText}
+                />
+                <Text
+                  style={[
+                    styles.subResultStatusText,
+                    { color: resultRecord.securityChecks.biometricMatch ? theme.badgeOperational : theme.errorText },
+                  ]}
+                >
+                  {resultRecord.securityChecks.biometricMatch ? 'PASSED' : 'FAILED'}
+                </Text>
               </View>
             </View>
 
             <View style={[styles.subResultItem, { backgroundColor: theme.isDark ? theme.surfaceContainerLow : '#f8fafc', borderColor: theme.border }]}>
-              <Text style={[styles.subResultLabel, { color: theme.textSecondary }]}>Liveness check</Text>
+              <Text style={[styles.subResultLabel, { color: theme.textSecondary }]}>Liveness / ELA</Text>
               <View style={styles.subResultStatus}>
-                <MaterialIcons name="check-circle" size={15} color={theme.badgeOperational} />
-                <Text style={[styles.subResultStatusText, { color: theme.badgeOperational }]}>PASSED</Text>
+                <MaterialIcons
+                  name={!resultRecord.securityChecks.tamperingDetected ? 'check-circle' : 'warning'}
+                  size={15}
+                  color={!resultRecord.securityChecks.tamperingDetected ? theme.badgeOperational : theme.errorText}
+                />
+                <Text
+                  style={[
+                    styles.subResultStatusText,
+                    { color: !resultRecord.securityChecks.tamperingDetected ? theme.badgeOperational : theme.errorText },
+                  ]}
+                >
+                  {!resultRecord.securityChecks.tamperingDetected ? 'PASSED' : 'ANOMALY'}
+                </Text>
               </View>
             </View>
 
             <View style={[styles.subResultItem, { backgroundColor: theme.isDark ? theme.surfaceContainerLow : '#f8fafc', borderColor: theme.border }]}>
               <Text style={[styles.subResultLabel, { color: theme.textSecondary }]}>Watchlist</Text>
               <View style={styles.subResultStatus}>
-                <MaterialIcons name="check-circle" size={15} color={theme.badgeOperational} />
-                <Text style={[styles.subResultStatusText, { color: theme.badgeOperational }]}>CLEAR</Text>
+                <MaterialIcons
+                  name={!resultRecord.securityChecks.watchlistMatch ? 'check-circle' : 'warning'}
+                  size={15}
+                  color={!resultRecord.securityChecks.watchlistMatch ? theme.badgeOperational : '#ef4444'}
+                />
+                <Text
+                  style={[
+                    styles.subResultStatusText,
+                    { color: !resultRecord.securityChecks.watchlistMatch ? theme.badgeOperational : '#ef4444' },
+                  ]}
+                >
+                  {!resultRecord.securityChecks.watchlistMatch ? 'CLEAR' : 'HIT!'}
+                </Text>
               </View>
             </View>
+          </View>
+        </View>
+
+        {/* AI Biometric Facial Verification Comparison Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.textPrimary, borderBottomColor: theme.borderLight }]}>
+            AI Biometric Facial Verification
+          </Text>
+
+          <View style={[styles.docItemCard, { backgroundColor: theme.surfaceCard, borderColor: theme.border, flexDirection: 'column', alignItems: 'stretch', gap: 12, padding: 14 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <MaterialIcons name="face" size={20} color="#0284c7" />
+                <Text style={{ color: theme.textPrimary, fontWeight: '700', fontSize: 14 }}>
+                  Initial Live Photo vs. Passport Face Photo (Officer Entry)
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: resultRecord.securityChecks.biometricMatch ? (theme.isDark ? '#143820' : '#e6f4ea') : (theme.isDark ? '#3d1818' : '#fef2f2'), borderColor: resultRecord.securityChecks.biometricMatch ? theme.badgeOperational : theme.errorText, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, gap: 4 }}>
+                <MaterialIcons name={resultRecord.securityChecks.biometricMatch ? 'verified' : 'error'} size={14} color={resultRecord.securityChecks.biometricMatch ? theme.badgeOperational : theme.errorText} />
+                <Text style={{ color: resultRecord.securityChecks.biometricMatch ? theme.badgeOperational : theme.errorText, fontWeight: '700', fontSize: 12 }}>
+                  {resultRecord.matchScore}% Match
+                </Text>
+              </View>
+            </View>
+
+            {/* Side-by-Side Face Images */}
+            <View style={{ flexDirection: 'row', gap: 12, justifyContent: 'space-around', marginVertical: 4 }}>
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                {resultRecord.livePhotoUri ? (
+                  <Image source={{ uri: resultRecord.livePhotoUri }} style={{ width: 100, height: 100, borderRadius: 8, borderWidth: 2, borderColor: theme.border }} resizeMode="cover" />
+                ) : (
+                  <View style={{ width: 100, height: 100, borderRadius: 8, backgroundColor: theme.isDark ? theme.surfaceContainerHigh : '#f1f5f9', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.border }}>
+                    <MaterialIcons name="person" size={40} color={theme.textMuted} />
+                  </View>
+                )}
+                <Text style={{ color: theme.textMuted, fontSize: 11, fontWeight: '600', marginTop: 4 }}>1. Initial Live Photo</Text>
+              </View>
+
+              <View style={{ justifyContent: 'center', alignItems: 'center' }}>
+                <MaterialIcons name="compare-arrows" size={26} color="#0284c7" />
+                <Text style={{ color: '#0284c7', fontSize: 11, fontWeight: '700' }}>AI MATCH</Text>
+              </View>
+
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                {resultRecord.photoUrl ? (
+                  <Image source={{ uri: resultRecord.photoUrl }} style={{ width: 100, height: 100, borderRadius: 8, borderWidth: 2, borderColor: theme.border }} resizeMode="cover" />
+                ) : (
+                  <View style={{ width: 100, height: 100, borderRadius: 8, backgroundColor: theme.isDark ? theme.surfaceContainerHigh : '#f1f5f9', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.border }}>
+                    <MaterialIcons name="menu-book" size={40} color={theme.textMuted} />
+                  </View>
+                )}
+                <Text style={{ color: theme.textMuted, fontSize: 11, fontWeight: '600', marginTop: 4 }}>2. Passport Face Photo (Officer Entry)</Text>
+              </View>
+            </View>
+
+            {/* AI Verification Analysis Note */}
+            <Text style={{ color: theme.textSecondary, fontSize: 12, lineHeight: 18, backgroundColor: theme.isDark ? theme.surfaceContainerLow : '#f8fafc', padding: 10, borderRadius: rounded.md }}>
+              <Text style={{ fontWeight: '700', color: theme.textPrimary }}>AI Biometric Result: </Text>
+              {resultRecord.securityChecks.biometricMatch
+                ? `High confidence biometric facial match (${resultRecord.matchScore}% similarity). ArcFace biometric embeddings from the Passport Face Photo (Officer Entry) match the Initial Live Photo subject.`
+                : `Biometric facial mismatch detected (${resultRecord.matchScore}% similarity below threshold). Initial Live Photo subject does not match the Passport Face Photo (Officer Entry).`}
+            </Text>
           </View>
         </View>
 
@@ -223,21 +360,39 @@ export const VerificationResultScreen: React.FC<VerificationResultScreenProps> =
               <MaterialIcons name="menu-book" size={20} color={theme.textPrimary} />
             </View>
             <View style={styles.docItemDetails}>
-              <Text style={[styles.docItemTitle, { color: theme.textPrimary }]}>Passport</Text>
-              <Text style={[styles.docItemSub, { color: theme.textMuted }]}>P8742031 · United States</Text>
+              <Text style={[styles.docItemTitle, { color: theme.textPrimary }]}>{resultRecord.docType}</Text>
+              <Text style={[styles.docItemSub, { color: theme.textMuted }]}>
+                {resultRecord.docNumber} · {resultRecord.nationality}
+              </Text>
             </View>
-            <Text style={[styles.docVerifiedTag, { color: theme.badgeOperational }]}>VERIFIED</Text>
+            <Text
+              style={[
+                styles.docVerifiedTag,
+                { color: isVerified ? theme.badgeOperational : isHighRisk ? '#ef4444' : theme.warningText },
+              ]}
+            >
+              {isVerified ? 'VERIFIED' : isHighRisk ? 'HIGH RISK' : 'REVIEW'}
+            </Text>
           </View>
 
           <View style={[styles.docItemCard, { backgroundColor: theme.surfaceCard, borderColor: theme.border }]}>
             <View style={[styles.docIconBox, { backgroundColor: theme.isDark ? theme.surfaceContainerHigh : '#f1f5f9' }]}>
-              <MaterialIcons name="badge" size={20} color={theme.textPrimary} />
+              <MaterialIcons name="security" size={20} color={theme.textPrimary} />
             </View>
             <View style={styles.docItemDetails}>
-              <Text style={[styles.docItemTitle, { color: theme.textPrimary }]}>National ID</Text>
-              <Text style={[styles.docItemSub, { color: theme.textMuted }]}>Ending 4821</Text>
+              <Text style={[styles.docItemTitle, { color: theme.textPrimary }]}>Hologram & Optical Security</Text>
+              <Text style={[styles.docItemSub, { color: theme.textMuted }]}>
+                Spectral reflection & UV watermark analysis
+              </Text>
             </View>
-            <Text style={[styles.docVerifiedTag, { color: theme.badgeOperational }]}>VERIFIED</Text>
+            <Text
+              style={[
+                styles.docVerifiedTag,
+                { color: resultRecord.securityChecks.hologramDetected ? theme.badgeOperational : theme.errorText },
+              ]}
+            >
+              {resultRecord.securityChecks.hologramDetected ? 'DETECTED' : 'FAIL'}
+            </Text>
           </View>
         </View>
 
@@ -249,14 +404,19 @@ export const VerificationResultScreen: React.FC<VerificationResultScreenProps> =
 
           <View style={[styles.timeline, { borderLeftColor: theme.border }]}>
             <View style={styles.timelineItem}>
-              <View style={[styles.timelineDot, { backgroundColor: theme.badgeOperational }]} />
+              <View
+                style={[
+                  styles.timelineDot,
+                  { backgroundColor: isVerified ? theme.badgeOperational : theme.errorText },
+                ]}
+              />
               <View style={styles.timelineContent}>
                 <View style={styles.timelineRow}>
                   <Text style={[styles.timelineEventTitle, { color: theme.textPrimary }]}>Verification completed</Text>
-                  <Text style={[styles.timelineTime, { color: theme.textMuted }]}>14:34</Text>
+                  <Text style={[styles.timelineTime, { color: theme.textMuted }]}>{resultRecord.timestamp}</Text>
                 </View>
                 <Text style={[styles.timelineEventDesc, { color: theme.textMuted }]}>
-                  Result generated and securely recorded.
+                  {resultRecord.notes || 'Result generated and securely recorded.'}
                 </Text>
               </View>
             </View>
@@ -265,11 +425,13 @@ export const VerificationResultScreen: React.FC<VerificationResultScreenProps> =
               <View style={[styles.timelineDot, { backgroundColor: theme.textMuted }]} />
               <View style={styles.timelineContent}>
                 <View style={styles.timelineRow}>
-                  <Text style={[styles.timelineEventTitle, { color: theme.textPrimary }]}>Documents validated</Text>
-                  <Text style={[styles.timelineTime, { color: theme.textMuted }]}>14:33</Text>
+                  <Text style={[styles.timelineEventTitle, { color: theme.textPrimary }]}>Documents evaluated</Text>
+                  <Text style={[styles.timelineTime, { color: theme.textMuted }]}>
+                    OCR: {resultRecord.ocrConfidence}%
+                  </Text>
                 </View>
                 <Text style={[styles.timelineEventDesc, { color: theme.textMuted }]}>
-                  Passport and ID checks passed.
+                  Passport OCR and forensic security analysis completed.
                 </Text>
               </View>
             </View>

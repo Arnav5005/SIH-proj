@@ -14,6 +14,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { getTheme, typography, rounded, spacing } from '../theme/theme';
+import { api, FaceQualityCheckResult } from '../services/api';
 
 interface FaceCaptureScreenProps {
   onBack: () => void;
@@ -32,10 +33,28 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
   const [capturedPhotoUri, setCapturedPhotoUri] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [webStreamActive, setWebStreamActive] = useState<boolean>(false);
+  const [qualityResult, setQualityResult] = useState<FaceQualityCheckResult | null>(null);
   
   const cameraRef = useRef<any>(null);
   const webVideoRef = useRef<any>(null);
   const webStreamRef = useRef<any>(null);
+
+  // Analyze Face Quality whenever photo is captured/changed
+  useEffect(() => {
+    if (capturedPhotoUri) {
+      setIsProcessing(true);
+      api.checkFaceQuality(capturedPhotoUri)
+        .then((res) => {
+          setQualityResult(res);
+        })
+        .catch(() => {
+          setQualityResult(null);
+        })
+        .finally(() => setIsProcessing(false));
+    } else {
+      setQualityResult(null);
+    }
+  }, [capturedPhotoUri]);
 
   // Web Webcam Initialization
   useEffect(() => {
@@ -78,7 +97,6 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
     }
   };
 
-  // Capture from Web Camera Stream
   const captureWebFrame = (): string | null => {
     if (Platform.OS !== 'web' || !webVideoRef.current) return null;
     try {
@@ -97,7 +115,6 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
     return null;
   };
 
-  // Main Capture Trigger (Cross Platform)
   const handleCapturePhoto = async () => {
     setIsProcessing(true);
     try {
@@ -111,17 +128,14 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
             return;
           }
         }
-        // Web fallback: Input file picker
         pickImageWeb(true);
       } else {
-        // Native Expo Camera
         if (cameraRef.current && nativePermission?.granted) {
           const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
           if (photo?.uri) {
             setCapturedPhotoUri(photo.uri);
           }
         } else {
-          // Native ImagePicker Camera Fallback
           const res = await ImagePicker.launchCameraAsync({
             allowsEditing: true,
             aspect: [1, 1],
@@ -139,7 +153,6 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
     }
   };
 
-  // Web File Picker Helper
   const pickImageWeb = (isCameraMode = false) => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
     const input = document.createElement('input');
@@ -164,7 +177,6 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
     input.click();
   };
 
-  // Gallery Picker (Web & Native)
   const handlePickFromGallery = async () => {
     if (Platform.OS === 'web') {
       pickImageWeb(false);
@@ -194,6 +206,7 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
 
   const handleRetake = () => {
     setCapturedPhotoUri(null);
+    setQualityResult(null);
     if (Platform.OS === 'web') {
       setTimeout(startWebCamera, 100);
     }
@@ -207,7 +220,73 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
       );
       return;
     }
+
+    if (qualityResult && !qualityResult.overall_valid) {
+      Alert.alert(
+        'Capture Checklist Failed',
+        `Facial capture requirements not met:\n\n${qualityResult.error_message || 'Please position face straight into camera and remove glasses/mask.'}\n\nPlease adjust pose or recapture photo.`,
+        [
+          { text: 'Recapture Photo', onPress: handleRetake },
+        ]
+      );
+      return;
+    }
+
     onNext(capturedPhotoUri);
+  };
+
+  // Helper renderer for dynamic checklist items
+  const renderCheckItem = (
+    label: string,
+    checkObj?: { passed: boolean; message: string; metrics?: any }
+  ) => {
+    let iconName: any = 'radio-button-unchecked';
+    let iconColor = theme.isDark ? '#9ca3af' : '#6b7280';
+    let displayMessage = label;
+    let isFailed = false;
+
+    // Requirement 1: If no face detected or no photo, leave unchecked/grayed out
+    if (!capturedPhotoUri || (qualityResult && !qualityResult.face_detected)) {
+      iconName = 'radio-button-unchecked';
+      iconColor = theme.isDark ? '#9ca3af' : '#6b7280';
+    } else if (checkObj) {
+      if (checkObj.passed) {
+        iconName = 'check-circle';
+        iconColor = theme.badgeOperational; // #10b981 / green
+      } else {
+        iconName = 'cancel';
+        iconColor = '#ef4444'; // red warning cross
+        displayMessage = checkObj.message;
+        isFailed = true;
+      }
+    }
+
+    return (
+      <View
+        style={[
+          styles.checkItem,
+          {
+            backgroundColor: theme.surfaceCard,
+            borderColor: isFailed ? '#ef4444' : theme.border,
+          },
+        ]}
+      >
+        <MaterialIcons name={iconName} size={16} color={iconColor} />
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[
+              styles.checkItemText,
+              {
+                color: isFailed ? '#ef4444' : checkObj?.passed ? theme.textPrimary : theme.textSecondary,
+                fontWeight: isFailed ? '600' : '400',
+              },
+            ]}
+          >
+            {displayMessage}
+          </Text>
+        </View>
+      </View>
+    );
   };
 
   return (
@@ -292,7 +371,6 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
           {/* Viewport Box */}
           <View style={[styles.viewport, { backgroundColor: theme.isDark ? '#0a0b0d' : '#e2e8f0' }]}>
             {capturedPhotoUri ? (
-              // Captured Photo Preview
               <View style={styles.previewContainer}>
                 <Image source={{ uri: capturedPhotoUri }} style={styles.capturedImage} resizeMode="contain" />
                 <View style={[styles.guidePill, { position: 'absolute', bottom: 12, backgroundColor: 'rgba(0,0,0,0.75)' }]}>
@@ -303,7 +381,6 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
                 </View>
               </View>
             ) : Platform.OS === 'web' ? (
-              // Web Camera View (HTML5 Video)
               <View style={styles.cameraOverlay}>
                 {/* @ts-ignore */}
                 <video
@@ -347,12 +424,12 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
                 )}
               </View>
             ) : nativePermission?.granted ? (
-              // Native Expo Camera
-              <CameraView
-                ref={cameraRef}
-                style={StyleSheet.absoluteFillObject}
-                facing={facing}
-              >
+              <View style={StyleSheet.absoluteFillObject}>
+                <CameraView
+                  ref={cameraRef}
+                  style={StyleSheet.absoluteFillObject}
+                  facing={facing}
+                />
                 <View style={styles.cameraOverlay}>
                   <View style={[styles.faceGuideOval, { borderColor: theme.badgeOperational }]}>
                     <View style={[styles.guidePill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
@@ -364,9 +441,8 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
                     <MaterialIcons name="flip-camera-ios" size={20} color="#ffffff" />
                   </TouchableOpacity>
                 </View>
-              </CameraView>
+              </View>
             ) : (
-              // Native Permission Prompt
               <View style={styles.placeholderCenter}>
                 <View style={[styles.faceGuideOval, { borderColor: theme.isDark ? '#6b7280' : '#4b5563' }]}>
                   <MaterialIcons
@@ -439,25 +515,65 @@ export const FaceCaptureScreen: React.FC<FaceCaptureScreenProps> = ({
           </View>
         </View>
 
-        {/* Capture Guidelines Checklist */}
+        {/* Capture Guidelines Checklist (Dynamic MediaPipe AI Verification) */}
         <View style={styles.checklistSection}>
-          <Text style={[styles.checklistHeader, { color: theme.textPrimary }]}>Capture checklist</Text>
-          <View style={styles.checklistGrid}>
-            <View style={[styles.checkItem, { backgroundColor: theme.surfaceCard, borderColor: theme.border }]}>
-              <MaterialIcons name="check-circle" size={16} color={theme.badgeOperational} />
-              <Text style={[styles.checkItemText, { color: theme.textSecondary }]}>Ensure face is centered</Text>
-            </View>
-
-            <View style={[styles.checkItem, { backgroundColor: theme.surfaceCard, borderColor: theme.border }]}>
-              <MaterialIcons name="check-circle" size={16} color={theme.badgeOperational} />
-              <Text style={[styles.checkItemText, { color: theme.textSecondary }]}>Good lighting on subject</Text>
-            </View>
-
-            <View style={[styles.checkItem, { backgroundColor: theme.surfaceCard, borderColor: theme.border }]}>
-              <MaterialIcons name="check-circle" size={16} color={theme.badgeOperational} />
-              <Text style={[styles.checkItemText, { color: theme.textSecondary }]}>Remove mask or glasses</Text>
-            </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={[styles.checklistHeader, { color: theme.textPrimary }]}>
+              Capture checklist (AI Verification)
+            </Text>
+            {isProcessing && <ActivityIndicator size="small" color={theme.textPrimary} />}
           </View>
+
+          {/* Explicit Error State Banner if No Face Detected */}
+          {qualityResult && !qualityResult.face_detected && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                backgroundColor: theme.isDark ? '#4a0e17' : '#fee2e2',
+                borderColor: '#ef4444',
+                borderWidth: 1,
+                padding: 10,
+                borderRadius: rounded.lg,
+                marginBottom: 6,
+              }}
+            >
+              <MaterialIcons name="warning" size={18} color="#ef4444" />
+              <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                {qualityResult.error_message || 'No face detected — please position yourself in frame'}
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.checklistGrid}>
+            {renderCheckItem(
+              'Ensure face is centered',
+              qualityResult?.face_detected ? qualityResult?.checks.face_centered : undefined
+            )}
+            {renderCheckItem(
+              'Good lighting on subject',
+              qualityResult?.face_detected ? qualityResult?.checks.good_lighting : undefined
+            )}
+          </View>
+
+          {/* Computed Metrics Log Banner for Verification */}
+          {qualityResult && qualityResult.face_detected && (
+            <View
+              style={{
+                marginTop: 6,
+                padding: 8,
+                borderRadius: rounded.default,
+                backgroundColor: theme.isDark ? '#1a1d24' : '#f1f5f9',
+                borderWidth: 1,
+                borderColor: theme.border,
+              }}
+            >
+              <Text style={{ fontSize: 10, fontFamily: typography.fontFamily.mono, color: theme.textMuted }}>
+                [MediaPipe AI Computed Metrics] X-Offset: {qualityResult.checks.face_centered.metrics?.offset_x_pct}%, Y-Offset: {qualityResult.checks.face_centered.metrics?.offset_y_pct}% | Brightness: {qualityResult.checks.good_lighting.metrics?.brightness}/255
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Footer Card */}
@@ -498,7 +614,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: spacing.marginMobile,
     paddingVertical: 14,
-    paddingBottom: 90,
+    paddingBottom: 40,
     maxWidth: spacing.containerMaxWidth,
     alignSelf: 'center',
     width: '100%',
@@ -508,38 +624,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    alignSelf: 'flex-start',
   },
   backLinkText: {
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
   },
   headerSection: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 8,
+    alignItems: 'center',
   },
   headerTitleCol: {
     flex: 1,
-    gap: 2,
   },
   pageTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
   },
   pageSubtitle: {
     fontSize: 12,
+    marginTop: 2,
   },
   idBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: rounded.default,
-    flexShrink: 0,
+    borderWidth: 1,
   },
   idBadgeLabel: {
     fontSize: 10,
@@ -547,8 +660,8 @@ const styles = StyleSheet.create({
   },
   idBadgeValue: {
     fontSize: 11,
-    fontFamily: typography.fontFamily.mono,
     fontWeight: '700',
+    fontFamily: typography.fontFamily.mono,
   },
   stepperContainer: {
     flexDirection: 'row',
@@ -575,17 +688,16 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   stepCircleActive: {
-    backgroundColor: '#0f172a',
-    borderColor: '#0f172a',
-  },
-  stepNum: {
-    fontSize: 11,
-    fontWeight: '600',
+    backgroundColor: '#000000',
+    borderColor: '#000000',
   },
   stepNumActive: {
     color: '#ffffff',
     fontSize: 11,
     fontWeight: '700',
+  },
+  stepNum: {
+    fontSize: 11,
   },
   stepLabel: {
     fontSize: 11,
@@ -600,30 +712,30 @@ const styles = StyleSheet.create({
   cameraCard: {
     borderRadius: rounded.xl,
     borderWidth: 1,
-    padding: 14,
-    gap: 12,
+    padding: 16,
+    gap: 14,
   },
   cameraHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   cameraTitle: {
     fontSize: 16,
     fontWeight: '700',
   },
   cameraSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
+    marginTop: 2,
   },
   cameraReadyBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: rounded.default,
     borderWidth: 1,
-    gap: 4,
-    flexShrink: 0,
   },
   readyDot: {
     width: 6,
@@ -632,16 +744,16 @@ const styles = StyleSheet.create({
   },
   cameraReadyText: {
     fontSize: 10,
-    fontFamily: typography.fontFamily.mono,
     fontWeight: '700',
+    fontFamily: typography.fontFamily.mono,
   },
   viewport: {
     height: 260,
     borderRadius: rounded.lg,
+    overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    overflow: 'hidden',
   },
   previewContainer: {
     width: '100%',
@@ -658,93 +770,90 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  placeholderCenter: {
-    alignItems: 'center',
-    gap: 12,
-  },
   faceGuideOval: {
-    width: 140,
-    height: 180,
-    borderRadius: 70,
+    width: 150,
+    height: 190,
+    borderRadius: 95,
     borderWidth: 2,
     borderStyle: 'dashed',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    gap: 6,
+    paddingBottom: 10,
   },
   guidePill: {
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: rounded.full,
-    flexDirection: 'row',
-    alignItems: 'center',
+    borderRadius: rounded.default,
   },
   guidePillText: {
-    fontSize: 10,
-    fontFamily: typography.fontFamily.mono,
+    fontSize: 9,
     fontWeight: '700',
+    fontFamily: typography.fontFamily.mono,
   },
   flipBtn: {
     position: 'absolute',
-    top: 10,
-    right: 10,
+    top: 12,
+    right: 12,
     backgroundColor: 'rgba(0,0,0,0.6)',
     padding: 8,
     borderRadius: 20,
-    zIndex: 10,
+  },
+  placeholderCenter: {
+    alignItems: 'center',
+    gap: 14,
   },
   permissionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: rounded.full,
-    zIndex: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: rounded.lg,
   },
   permissionBtnText: {
     color: '#ffffff',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   actionRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
+    alignItems: 'center',
   },
   captureButton: {
     flex: 1,
+    height: 44,
+    borderRadius: rounded.lg,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 12,
-    borderRadius: rounded.lg,
-    gap: 6,
+    gap: 8,
   },
   captureButtonText: {
     fontSize: 13,
     fontWeight: '700',
   },
   galleryButton: {
+    height: 44,
+    paddingHorizontal: 16,
+    borderRadius: rounded.lg,
+    borderWidth: 1,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: rounded.lg,
-    borderWidth: 1,
-    gap: 4,
+    gap: 6,
   },
   galleryButtonText: {
     fontSize: 13,
     fontWeight: '600',
   },
   retakeButton: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    width: 44,
+    height: 44,
     borderRadius: rounded.lg,
     borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   checklistSection: {
     gap: 8,
@@ -753,7 +862,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     fontFamily: typography.fontFamily.mono,
-    textTransform: 'uppercase',
   },
   checklistGrid: {
     gap: 6,
@@ -761,10 +869,11 @@ const styles = StyleSheet.create({
   checkItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 10,
-    borderRadius: rounded.md,
-    borderWidth: 1,
     gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: rounded.lg,
+    borderWidth: 1,
   },
   checkItemText: {
     fontSize: 12,
@@ -784,11 +893,11 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.mono,
   },
   nextButton: {
+    height: 46,
+    borderRadius: rounded.lg,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 13,
-    borderRadius: rounded.lg,
     gap: 8,
   },
   nextButtonText: {

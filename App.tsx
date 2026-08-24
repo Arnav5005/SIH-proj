@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
   SafeAreaView,
   StatusBar,
+  LogBox,
 } from 'react-native';
+
+LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
 import { TopAppBar } from './src/components/TopAppBar';
 import { BottomNavBar, TabType } from './src/components/BottomNavBar';
 import { LoginScreen } from './src/screens/LoginScreen';
@@ -18,6 +21,7 @@ import { RecordDetailModal } from './src/screens/RecordDetailModal';
 import { mockOfficer, initialRecords } from './src/mockData';
 import { ScreeningRecord, OfficerProfile } from './src/types';
 import { getTheme } from './src/theme/theme';
+import { api } from './src/services/api';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
@@ -27,8 +31,19 @@ export default function App() {
   const [scanStep, setScanStep] = useState<1 | 2 | 3>(1);
   const [records, setRecords] = useState<ScreeningRecord[]>(initialRecords);
   const [selectedRecord, setSelectedRecord] = useState<ScreeningRecord | null>(null);
+  const [capturedFaceUri, setCapturedFaceUri] = useState<string | null>(null);
+  const [activeScreeningResult, setActiveScreeningResult] = useState<ScreeningRecord | null>(null);
 
   const theme = getTheme(isDarkMode);
+
+  // Load real records from backend database on mount
+  useEffect(() => {
+    api.getScreeningRecords().then((fetched) => {
+      if (fetched && fetched.length > 0) {
+        setRecords(fetched);
+      }
+    });
+  }, []);
 
   // Authentication
   const handleLoginSuccess = (officerData: any) => {
@@ -51,22 +66,33 @@ export default function App() {
   // Verification Step Flow
   const handleStartNewVerification = () => {
     setScanStep(1);
+    setCapturedFaceUri(null);
+    setActiveScreeningResult(null);
     setCurrentTab('scan');
   };
 
   const handleAcceptVerification = (newRecord: ScreeningRecord) => {
-    setRecords((prev) => [newRecord, ...prev]);
+    api.updateRecordStatus(newRecord.id, 'VERIFIED');
+    setRecords((prev) => {
+      const exists = prev.some((r) => r.id === newRecord.id);
+      return exists ? prev.map((r) => (r.id === newRecord.id ? newRecord : r)) : [newRecord, ...prev];
+    });
     setScanStep(1);
     setCurrentTab('records');
   };
 
   const handleDenyVerification = (newRecord: ScreeningRecord) => {
-    setRecords((prev) => [newRecord, ...prev]);
+    api.updateRecordStatus(newRecord.id, 'MISMATCH');
+    setRecords((prev) => {
+      const exists = prev.some((r) => r.id === newRecord.id);
+      return exists ? prev.map((r) => (r.id === newRecord.id ? newRecord : r)) : [newRecord, ...prev];
+    });
     setScanStep(1);
     setCurrentTab('records');
   };
 
   const handleUpdateRecordStatus = (recordId: string, newStatus: any) => {
+    api.updateRecordStatus(recordId, newStatus);
     setRecords((prev) =>
       prev.map((r) => (r.id === recordId ? { ...r, status: newStatus } : r))
     );
@@ -119,20 +145,28 @@ export default function App() {
             {scanStep === 1 && (
               <FaceCaptureScreen
                 onBack={() => setCurrentTab('dashboard')}
-                onNext={() => setScanStep(2)}
+                onNext={(photoUri) => {
+                  if (photoUri) setCapturedFaceUri(photoUri);
+                  setScanStep(2);
+                }}
                 isDark={isDarkMode}
               />
             )}
             {scanStep === 2 && (
               <DocumentUploadScreen
                 onBack={() => setScanStep(1)}
-                onNext={() => setScanStep(3)}
+                capturedPhotoUri={capturedFaceUri}
+                onNext={(result) => {
+                  if (result) setActiveScreeningResult(result);
+                  setScanStep(3);
+                }}
                 isDark={isDarkMode}
               />
             )}
             {scanStep === 3 && (
               <VerificationResultScreen
                 onBack={() => setScanStep(2)}
+                record={activeScreeningResult}
                 onAccept={handleAcceptVerification}
                 onDeny={handleDenyVerification}
                 onNewVerification={handleStartNewVerification}
